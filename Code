@@ -140,6 +140,3 @@ def main():
 
     print(f"\n All results saved to: {base_output_dir}")
     print("GAE processing complete.")
-
-if __name__ == "__main__":
-    main()
