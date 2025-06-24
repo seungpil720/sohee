@@ -24,20 +24,35 @@ This project implements a **Graph Autoencoder (GAE)** using PyTorch Geometric to
 ```
 
 GAE\_Project/
+
 ├── data/                        # CSV data files (monthly & regional)
+
 │   ├── 2023\_GAE\_input\_03.csv
+
 │   ├── 2023\_GAE\_input\_08.csv
+
 │   ├── 2023\_GAE\_input\_12.csv
+
 │   ├── 2023\_Busan\_monthly.csv
+
 │   ├── 2023\_Chungbuk\_monthly.csv
+
 ├── outputs/                     # Generated output (created automatically)
+
 │   ├── 2023\_Region\_Graphs.png
+
 │   ├── 2023\_Monthly\_Graphs.png
+
 │   ├── Excel outputs (.xlsx)
+
 ├── GAE\_0610.py                  # Main GAE script
+
 ├── requirements.txt             # Dependencies
+
 ├── .gitignore                   # Files/folders to exclude from Git
+
 ├── LICENSE                      # License (MIT)
+
 └── README.md                    # This file
 
 ````
@@ -163,7 +178,7 @@ This project is licensed under the MIT License — see `LICENSE` for details.
 
 ## Acknowledgments
 
-Developed by **Seungpil Jeong**
+Developed by **Sohee Wang** and **Seungpil Jeong**
 For academic and public health research use.
 
 ---
