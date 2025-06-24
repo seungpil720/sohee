@@ -1,0 +1,145 @@
+import os
+import torch
+import torch.nn.functional as F
+import pandas as pd
+import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
+from torch_geometric.nn import GCNConv, GAE
+from sklearn.preprocessing import MinMaxScaler
+
+# ===== GCN Encoder for GAE =====
+class GCNEncoder(torch.nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv1 = GCNConv(in_channels, 16)
+        self.conv2 = GCNConv(16, out_channels)
+
+    def forward(self, x, edge_index):
+        x = self.conv1(x, edge_index)
+        x = F.relu(x)
+        x = self.conv2(x, edge_index)
+        return x
+
+# ===== Create Output Directory =====
+base_output_dir = os.path.join("outputs")
+os.makedirs(base_output_dir, exist_ok=True)
+
+# ===== Main GAE Analysis Function =====
+def run_gae_for_structure(df, name, axs, index, corr_list, adj_dict, min_corr=0.4, max_corr=1.0):
+    scaled_rows = np.array([
+        MinMaxScaler().fit_transform(row.reshape(-1, 1)).flatten()
+        for row in df.values
+    ])
+    x = torch.tensor(scaled_rows, dtype=torch.float)
+
+    node_names = df.index.tolist()
+    rename_dict = {"IschemicStroke": "IS", "HemorrhagicStroke": "HS", "sulfur_dioxide": "SO2", "nitrogen_dioxide": "NO2"}
+    node_names = [rename_dict.get(name, name) for name in node_names]
+    num_nodes = len(node_names)
+
+    corr_matrix = np.corrcoef(x.numpy())
+    edge_index = []
+
+    for i in range(num_nodes):
+        for j in range(i + 1, num_nodes):
+            correlation = corr_matrix[i][j]
+            if min_corr <= abs(correlation) <= max_corr:
+                edge_index.append([i, j])
+                edge_index.append([j, i])
+                corr_list.append({"Graph": name, "Node1": node_names[i], "Node2": node_names[j], "Correlation": round(correlation, 4)})
+    edge_index = torch.tensor(edge_index, dtype=torch.long).T
+
+    model = GAE(GCNEncoder(in_channels=x.shape[1], out_channels=2))
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+    for _ in range(100):
+        model.train()
+        optimizer.zero_grad()
+        z = model.encode(x, edge_index)
+        loss = model.recon_loss(z, edge_index)
+        loss.backward()
+        optimizer.step()
+
+    model.eval()
+    with torch.no_grad():
+        z = model.encode(x, edge_index)
+        adj_pred = model.decoder.forward_all(z).detach().numpy()
+
+    adj_df = pd.DataFrame(adj_pred, index=node_names, columns=node_names)
+    adj_dict[name] = adj_df
+
+    G = nx.Graph()
+    for i, node in enumerate(node_names):
+        G.add_node(i, label=node)
+    edge_weights, edge_colors = [], []
+
+    for i in range(num_nodes):
+        for j in range(i + 1, num_nodes):
+            weight = adj_pred[i][j]
+            if weight > 0.3:
+                G.add_edge(i, j, weight=round(float(weight), 2))
+                edge_weights.append(weight * 5)
+                edge_colors.append('gray')
+
+    layout_pos = nx.spring_layout(G, seed=42)
+    axs[index].set_title(f"{name} (GAE)")
+    node_colors = ['gray'] * num_nodes
+    nx.draw_networkx_nodes(G, layout_pos, ax=axs[index], node_color=node_colors, node_size=1500)
+    nx.draw_networkx_edges(G, layout_pos, ax=axs[index], width=edge_weights, edge_color=edge_colors, alpha=0.5)
+    for i in G.nodes():
+        x_, y_ = layout_pos[i]
+        label = node_names[i]
+        axs[index].text(x_, y_, label, fontsize=10, fontweight='bold', ha='center', va='center')
+    axs[index].axis('off')
+
+# ===== Main Execution Block =====
+def main():
+    for year in [2023]:
+        data_path = os.path.join("data")
+        region_files = sorted([f for f in os.listdir(data_path) if f.endswith('_monthly.csv')])
+        fig, axs = plt.subplots((len(region_files) + 3) // 4, 4, figsize=(22, ((len(region_files) + 3) // 4) * 5))
+        axs = axs.flatten()
+
+        corr_region, adj_region_dict = [], {}
+
+        for i, file in enumerate(region_files):
+            df = pd.read_csv(os.path.join(data_path, file), index_col=0)
+            name = f"{file.replace('_monthly.csv', '')} ({year})"
+            run_gae_for_structure(df, name, axs, i, corr_region, adj_region_dict)
+
+        for j in range(i + 1, len(axs)):
+            axs[j].axis('off')
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(base_output_dir, f"{year}_Region_Graphs.png"), bbox_inches='tight', dpi=300)
+        plt.close()
+        pd.DataFrame(corr_region).to_excel(os.path.join(base_output_dir, f"{year}_Region_Correlations.xlsx"), index=False)
+        for name, adj_df in adj_region_dict.items():
+            adj_df.to_excel(os.path.join(base_output_dir, f"{name.replace(' ', '_')}_AdjPred.xlsx"))
+
+        fig, axs = plt.subplots(3, 4, figsize=(24, 15))
+        axs = axs.flatten()
+        corr_month, adj_month_dict = [], {}
+
+        for idx in range(1, 13):
+            file = os.path.join(data_path, f"2023_GAE_input_{idx:02d}.csv")
+            if not os.path.exists(file): continue
+            df = pd.read_csv(file, index_col=0)
+            name = f"Month {idx} ({year})"
+            run_gae_for_structure(df, name, axs, idx - 1, corr_month, adj_month_dict)
+
+        for j in range(idx, len(axs)):
+            axs[j].axis('off')
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(base_output_dir, f"{year}_Monthly_Graphs.png"), bbox_inches='tight', dpi=300)
+        plt.close()
+        pd.DataFrame(corr_month).to_excel(os.path.join(base_output_dir, f"{year}_Monthly_Correlations.xlsx"), index=False)
+        for name, adj_df in adj_month_dict.items():
+            adj_df.to_excel(os.path.join(base_output_dir, f"{name.replace(' ', '_')}_AdjPred.xlsx"))
+
+    print(f"\n All results saved to: {base_output_dir}")
+    print("GAE processing complete.")
+
+if __name__ == "__main__":
+    main()
